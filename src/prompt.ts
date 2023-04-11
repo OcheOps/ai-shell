@@ -1,14 +1,14 @@
 import * as p from '@clack/prompts';
-import { bgCyan, black } from 'kolorist';
-import { commandName } from './helpers/constants';
-import { getConfig } from './helpers/config';
-import { KnownError } from './helpers/error';
+import { execaCommand } from 'execa';
+import { cyan, dim } from 'kolorist';
 import {
   getExplanation,
   getRevision,
   getScriptAndInfo,
 } from './helpers/completion';
-import { execaCommand } from 'execa';
+import { getConfig } from './helpers/config';
+import { projectName } from './helpers/constants';
+import { KnownError } from './helpers/error';
 
 const sample = <T>(arr: T[]): T | undefined => {
   const len = arr == null ? 0 : arr.length;
@@ -21,6 +21,17 @@ const examples = [
   'fetch me a random joke',
   'list all commits',
 ];
+
+async function runScript(script: string) {
+  p.outro(`Running: ${script}`);
+  console.log('');
+  await execaCommand(script, {
+    stdio: 'inherit',
+    shell: process.env.SHELL || true,
+  }).catch(() => {
+    // Nothing needed, it'll output to stderr
+  });
+}
 
 async function getPrompt(prompt?: string) {
   const group = p.group(
@@ -68,8 +79,13 @@ async function promptForRevision() {
   return (await group).prompt;
 }
 
-export async function prompt({ usePrompt }: { usePrompt?: string } = {}) {
-  const { OPENAI_KEY: key } = await getConfig();
+export async function prompt({
+  usePrompt,
+  silentMode,
+}: { usePrompt?: string; silentMode?: boolean } = {}) {
+  const { OPENAI_KEY: key, SILENT_MODE } = await getConfig();
+  const skipCommandExplanation = silentMode || SILENT_MODE;
+
   if (!key) {
     throw new KnownError(
       'Please set your OpenAI API key via `ai-shell config set OPENAI_KEY=<your token>`'
@@ -78,35 +94,58 @@ export async function prompt({ usePrompt }: { usePrompt?: string } = {}) {
   parseAssert('OPENAI_KEY', key.startsWith('sk-'), 'Must start with "sk-"');
 
   console.log('');
-  p.intro(`${bgCyan(black(` ${commandName} `))}`);
+  p.intro(`${cyan(`${projectName}`)}`);
 
   const thePrompt = usePrompt || (await getPrompt());
-
   const spin = p.spinner();
   spin.start(`Loading...`);
-  let { script, info } = await getScriptAndInfo({ prompt: thePrompt, key });
+  const { readInfo, readScript } = await getScriptAndInfo({
+    prompt: thePrompt,
+    key,
+  });
   spin.stop(`Your script:`);
-  p.log.message(script);
-  if (!info) {
-    const spin = p.spinner();
+  console.log('');
+  const script = await readScript(process.stdout.write.bind(process.stdout));
+  console.log('');
+  console.log('');
+  console.log(dim('•'));
+  if (!skipCommandExplanation) {
     spin.start(`Getting explanation...`);
-    info = await getExplanation({ script, key });
-    spin.stop(`Explanation:`);
+    const info = await readInfo(process.stdout.write.bind(process.stdout));
+    if (!info) {
+      const { readExplanation } = await getExplanation({ script, key });
+      spin.stop(`Explanation:`);
+      console.log('');
+      await readExplanation(process.stdout.write.bind(process.stdout));
+      console.log('');
+      console.log('');
+      console.log(dim('•'));
+    }
   }
-  p.log.message(info);
 
   await runOrReviseFlow(script, key);
 }
 
 async function runOrReviseFlow(script: string, key: string) {
+  const nonEmptyScript = script.trim() !== '';
+
   const answer = await p.select({
-    message: 'Run this script?',
+    message: nonEmptyScript ? 'Run this script?' : 'Revise this script?',
     options: [
-      { label: '✅ Yes', value: 'yes', hint: 'Lets go!' },
+      ...(nonEmptyScript
+        ? [
+            { label: '✅ Yes', value: 'yes', hint: 'Lets go!' },
+            {
+              label: '📝 Edit',
+              value: 'edit',
+              hint: 'Make some adjustments before running',
+            },
+          ]
+        : []),
       {
-        label: '📝 Revise',
+        label: '🔁 Revise',
         value: 'revise',
-        hint: 'Give feedback your prompt and get a new result',
+        hint: 'Give feedback via prompt and get a new result',
       },
       { label: '❌ Cancel', value: 'cancel', hint: 'Exit the program' },
     ],
@@ -115,21 +154,23 @@ async function runOrReviseFlow(script: string, key: string) {
   const confirmed = answer === 'yes';
   const cancel = answer === 'cancel';
   const revisePrompt = answer === 'revise';
+  const edit = answer === 'edit';
 
   if (revisePrompt) {
     await revisionFlow(script, key);
   } else if (confirmed) {
-    p.outro(`Running: ${script}`);
-    console.log('');
-    await execaCommand(script, {
-      stdio: 'inherit',
-      shell: process.env.SHELL || true,
-    }).catch((err) => {
-      // Nothing needed, it'll output to stderr
-    });
+    await runScript(script);
   } else if (cancel) {
     p.cancel('Goodbye!');
     process.exit(0);
+  } else if (edit) {
+    const newScript = await p.text({
+      message: 'you can edit script here:',
+      initialValue: script,
+    });
+    if (!p.isCancel(newScript)) {
+      await runScript(newScript);
+    }
   }
 }
 
@@ -137,18 +178,29 @@ async function revisionFlow(currentScript: string, key: string) {
   const revision = await promptForRevision();
   const spin = p.spinner();
   spin.start(`Loading...`);
-  const script = await getRevision({
+  const { readScript } = await getRevision({
     prompt: revision,
     code: currentScript,
     key,
   });
   spin.stop(`Your new script:`);
-  p.log.message(script);
+
+  console.log('');
+  const script = await readScript(process.stdout.write.bind(process.stdout));
+  console.log('');
+  console.log('');
+  console.log(dim('•'));
+
   const infoSpin = p.spinner();
   infoSpin.start(`Getting explanation...`);
-  const info = await getExplanation({ script, key });
+  const { readExplanation } = await getExplanation({ script, key });
+
   infoSpin.stop(`Explanation:`);
-  p.log.message(info);
+  console.log('');
+  await readExplanation(process.stdout.write.bind(process.stdout));
+  console.log('');
+  console.log('');
+  console.log(dim('•'));
 
   await runOrReviseFlow(script, key);
 }
