@@ -50,3 +50,11 @@
 ## 0.1.8
 
 - Better error handling (handle streams and non streams, JSON and strings)
+
+## 0.1.9
+
+- Visual config UI (from `ai config ui`)
+
+## 0.1.10
+
+- Obfuscate API key from config UI
