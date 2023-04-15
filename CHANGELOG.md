@@ -58,3 +58,16 @@
 ## 0.1.10
 
 - Obfuscate API key from config UI
+
+## 0.1.11
+
+- `ai update` command
+- minor UX improvements and fixes
+
+## 0.1.12
+
+- support custom API endpoints
+
+## 0.1.13
+
+- fix for using cloudflare proxy (fix streaming logic to handle partial chunks)
