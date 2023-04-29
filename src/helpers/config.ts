@@ -25,7 +25,6 @@ const configParsers = {
         `Please set your OpenAI API key via \`${commandName} config set OPENAI_KEY=<your token>\``
       );
     }
-    parseAssert('OPENAI_KEY', key.startsWith('sk-'), 'Must start with "sk-"');
 
     return key;
   },
@@ -149,7 +148,9 @@ export const showConfigUI = async () => {
       const key = await p.text({
         message: 'Enter your OpenAI API key',
         validate: (value) => {
-          if (!value.startsWith('sk-')) return 'Must start with "sk-"';
+          if (value.length) {
+            return 'Please enter a key';
+          }
         },
       });
       if (p.isCancel(key)) return;
